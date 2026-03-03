@@ -24,7 +24,10 @@ def filtrando_df_general(df_general, filtros):
             return any(re.search(pat, texto) for pat in patrones)
 
         mask_general = df_filtrado["NOMBRE_PROYECTO"].apply(contiene_palabras)
-        df_filtrado = df_filtrado[mask_general]
+        mask_id = df_filtrado["ID"].apply(contiene_palabras)
+
+        df_filtrado = df_filtrado[mask_general | mask_id]
+        # df_filtrado = df_filtrado[mask_general]
     # if filtros.get("palabras_clave"):
     #     palabras = [p.lower() for p in filtros["palabras_clave"]]
         
@@ -41,7 +44,9 @@ def filtrando_df_general(df_general, filtros):
 
     # --- Filtro por CPV (lista de códigos dentro de cada celda) ---
     if filtros.get("cpv"):
+        # print("ENTRO")
         codigos_cpv = [c.split("-")[0] for c in filtros["cpv"]]
+        # print(codigos_cpv)
 
         def tiene_cpv_en_filtros(cpv_list):
             if isinstance(cpv_list, str):
@@ -192,8 +197,10 @@ def criterios_filtrado(criterios_general, df_filtrado):
     if criterios_general is None or df_filtrado is None or df_filtrado.empty:
         return criterios_general.iloc[0:0]
 
-    ids_validos = set(df_filtrado["ID"].unique())
-    return criterios_general[criterios_general["pliego_id"].isin(ids_validos)]
+    # ids_validos = set(df_filtrado["ID"].unique())
+    # return criterios_general[criterios_general["pliego_id"].isin(ids_validos)]
+    ids_validos = set(df_filtrado["ID_INTERNO"].unique()) ## POST CAMBIO
+    return criterios_general[criterios_general["ID_INTERNO"].isin(ids_validos)]## POST CAMBIO
 
 
 def requisitos_filtrado(requisitos_general, df_filtrado):
@@ -203,8 +210,10 @@ def requisitos_filtrado(requisitos_general, df_filtrado):
     if requisitos_general is None or df_filtrado is None or df_filtrado.empty:
         return requisitos_general.iloc[0:0]
 
-    ids_validos = set(df_filtrado["ID"].unique())
-    return requisitos_general[requisitos_general["pliego_id"].isin(ids_validos)]
+    # ids_validos = set(df_filtrado["ID"].unique())
+    # return requisitos_general[requisitos_general["pliego_id"].isin(ids_validos)]
+    ids_validos = set(df_filtrado["ID_INTERNO"].unique())
+    return requisitos_general[requisitos_general["ID_INTERNO"].isin(ids_validos)]
 
 
 def documentos_filtrado(documentos_general, df_filtrado):
@@ -214,15 +223,29 @@ def documentos_filtrado(documentos_general, df_filtrado):
     if documentos_general is None or df_filtrado is None or df_filtrado.empty:
         return documentos_general.iloc[0:0]
 
-    ids_validos = set(df_filtrado["ID"].unique())
-    return documentos_general[documentos_general["pliego_id"].isin(ids_validos)]
+    # ids_validos = set(df_filtrado["ID"].unique())
+    # return documentos_general[documentos_general["pliego_id"].isin(ids_validos)]
+    ids_validos = set(df_filtrado["ID_INTERNO"].unique())
+    return documentos_general[documentos_general["ID_INTERNO"].isin(ids_validos)]
 
+def adjudicatarios_filtrado(documentos_general, df_filtrado):
+    """
+    Filtra la tabla de documentos en base a los pliegos del dataframe general filtrado.
+    """
+    if documentos_general is None or df_filtrado is None or df_filtrado.empty:
+        return documentos_general.iloc[0:0]
 
-def filtrar_bd(df_general, df_criterios, df_requisitos, df_documentos, filtros, df_textos):
+    # ids_validos = set(df_filtrado["ID"].unique())
+    # return documentos_general[documentos_general["pliego_id"].isin(ids_validos)]
+    ids_validos = set(df_filtrado["ID_INTERNO"].unique())
+    return documentos_general[documentos_general["ID_INTERNO"].isin(ids_validos)]
+
+def filtrar_bd(df_general, df_criterios, df_requisitos, df_documentos, filtros, df_textos, df_adjudicatarios):
     general_filtrado = filtrando_df_general(df_general, filtros)
     criterios_filtrados = criterios_filtrado(df_criterios, general_filtrado)
     requisitos_filtrados = requisitos_filtrado(df_requisitos, general_filtrado)
     documentos_filtrados = documentos_filtrado(df_documentos, general_filtrado)
+    adjudicatarios_filtrados = adjudicatarios_filtrado(df_adjudicatarios, general_filtrado)
 
     # --- Extensión del filtro por palabras clave ---
     if filtros.get("palabras_clave"):
@@ -233,15 +256,23 @@ def filtrar_bd(df_general, df_criterios, df_requisitos, df_documentos, filtros, 
                 return False
             t = texto.lower()
             return any(p in t for p in palabras)
-
-        ids_encontrados = set(general_filtrado["ID"])
+        
+        ## ESTO ES PARA PERMITIR BUSQUEDAS POR ID LICITACION --------
+        ids_encontrados = set(general_filtrado["ID_INTERNO"])
+        
+        ## BUSCAMOS COINCIDENCIAS DIRECTAS DE ID
+        ids_coincidencia_directa = set(
+            df_general.loc[df_general["ID"].apply(contiene_palabras),
+                           "ID_INTERNO"]
+        )
+        ids_encontrados |= ids_coincidencia_directa
 
         # Buscar coincidencias en criterios
         if df_criterios is not None and not df_criterios.empty:
             ids_en_criterios = set(
                 df_criterios.loc[
                     df_criterios["DESCRIPCION"].apply(contiene_palabras), 
-                    "pliego_id"
+                    "ID_INTERNO"
                 ]
             )
             ids_encontrados |= ids_en_criterios
@@ -251,10 +282,21 @@ def filtrar_bd(df_general, df_criterios, df_requisitos, df_documentos, filtros, 
             ids_en_requisitos = set(
                 df_requisitos.loc[
                     df_requisitos["DESCRIPCION"].apply(contiene_palabras), 
-                    "pliego_id"
+                    "ID_INTERNO"
                 ]
             )
             ids_encontrados |= ids_en_requisitos
+            
+        # Buscar coincidencias en adjudicatarios
+        if df_adjudicatarios is not None and not df_adjudicatarios.empty:
+            ids_en_adjudicatarios = set(
+                df_adjudicatarios.loc[
+                    df_adjudicatarios["NOMBRE_ADJUDICATARIO"].apply(contiene_palabras), 
+                    "ID_INTERNO"
+                ].astype(str).str.strip()
+            )
+            ids_encontrados |= ids_en_adjudicatarios
+        
 
         # Buscar coincidencias en documentos (solo si el checkbox está activado)
         # if filtros.get("incluir_pdf") and df_documentos is not None and not df_documentos.empty:
@@ -270,13 +312,23 @@ def filtrar_bd(df_general, df_criterios, df_requisitos, df_documentos, filtros, 
             ids_en_docs = set(
                 df_textos.loc[
                     df_textos["TEXTO_EXTRAIDO"].apply(contiene_palabras), 
-                    "pliego_id"
+                    "ID_INTERNO"
                 ]
             )
             ids_encontrados |= ids_en_docs
+        print("IDS ENCONTRADOS", ids_encontrados)
+        print(ids_en_adjudicatarios)
 
         # Mantener solo los IDs donde haya coincidencias
-        general_filtrado = general_filtrado[general_filtrado["ID"].isin(ids_encontrados)]
+        general_filtrado["ID_INTERNO"] = general_filtrado["ID_INTERNO"].astype(str).str.strip()
+        # print(general_filtrado.head())
+        if ids_en_adjudicatarios:
+            # general_filtrado = df_general[df_general["ID_INTERNO"].isin(ids_encontrados)]
+            general_filtrado = general_filtrado[general_filtrado["ID_INTERNO"].isin(ids_encontrados)]
+            # pass
+        else:
+            general_filtrado = general_filtrado[general_filtrado["ID_INTERNO"].isin(ids_encontrados)]
+        print("GENERAL FILTRADO", general_filtrado.head())
 
         # Actualizar tablas relacionadas
         criterios_filtrados = criterios_filtrado(df_criterios, general_filtrado)
@@ -284,45 +336,6 @@ def filtrar_bd(df_general, df_criterios, df_requisitos, df_documentos, filtros, 
         documentos_filtrados = documentos_filtrado(df_documentos, general_filtrado)
 
     return general_filtrado, criterios_filtrados, requisitos_filtrados, documentos_filtrados
-##DESCOMENTAR PARA VOLVER A ANTERIOR
-# def filtrar_bd(df_general, df_criterios, df_requisitos, df_documentos, filtros):
-#     """
-#     Aplica todos los filtros sobre la base de datos principal y sus tablas relacionadas.
-#     """
-#     # Filtrado principal
-#     general_filtrado = filtrando_df_general(df_general, filtros)
-
-#     # Tablas relacionadas (solo las filas correspondientes a los IDs filtrados)
-#     criterios_filtrados = criterios_filtrado(df_criterios, general_filtrado)
-#     requisitos_filtrados = requisitos_filtrado(df_requisitos, general_filtrado)
-#     documentos_filtrados = documentos_filtrado(df_documentos, general_filtrado)
-
-#     return general_filtrado, criterios_filtrados, requisitos_filtrados, documentos_filtrados
-# import os
-# base_path = r"src\data"
-# df_general = pd.read_parquet(os.path.join(base_path, "Pliegos_general.parquet"), engine="pyarrow")
-# # print(df_general["CPV"], df_general["IMPORTE"])
-# df_requisitos = pd.read_parquet(os.path.join(base_path, "Requisitos_general.parquet"), engine="pyarrow")
-# df_criterios = pd.read_parquet(os.path.join(base_path, "Criterios_general.parquet"), engine="pyarrow")
-# df_docs = pd.read_parquet(os.path.join(base_path, "Documentacion_general.parquet"), engine="pyarrow")
-
-# # Supongamos:
-# filtros = {
-#     "cpv": ["34955100-7 - Redes"],
-#     "lugar": [],
-#     "importe_min": 0,
-#     "importe_max": 500000,
-#     "entidades": []
-# }
-
-# general_f, criterios_f, requisitos_f, docs_f = filtrar_bd(
-#     df_general, df_criterios, df_requisitos, df_docs, filtros
-# )
-
-# print("General filtrado:", len(general_f))
-# print("Criterios filtrados:", len(criterios_f))
-# print("Requisitos filtrados:", len(requisitos_f))
-# print("Docs filtrados:", len(docs_f))
 
 def filtrando_palabras(df_general, df_criterios, df_requisitos, df_documentos, palabras):
     pass

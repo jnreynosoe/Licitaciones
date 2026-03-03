@@ -4,8 +4,8 @@ import tabulate
 def load_datasets():
     # Calcula la ruta base del proyecto (no solo del archivo actual)
     base_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
-    base_path = r"src\data"
-    # print(f"Buscando archivos en: {os.path.abspath(base_path)}")
+    base_path = r"src/data"
+    print(f"Buscando archivos en: {os.path.abspath(base_path)}")
     try:
         df_general = pd.read_parquet(os.path.join(base_path, "Pliegos_general.parquet"), engine="pyarrow")
         df_requisitos = pd.read_parquet(os.path.join(base_path, "Requisitos_general.parquet"), engine="pyarrow")

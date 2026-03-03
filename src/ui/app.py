@@ -455,7 +455,7 @@ except:
 
 
 class AppLicitaciones:
-    def __init__(self, page: ft.Page, df_general, df_requisitos, df_criterios, df_docs, df_cpv):
+    def __init__(self, page: ft.Page, df_general, df_requisitos, df_criterios, df_docs, df_cpv, df_adjudicatarios):
         self.page = page
         self.page.title = "Explorador de Licitaciones"
         self.page.scroll = "adaptive"
@@ -485,8 +485,16 @@ class AppLicitaciones:
         self.df_criterios = df_criterios
         self.df_docs = df_docs
         self.df_cpv = df_cpv
-        self.df_analisis = load_dataset(r"src\data", "analisis_resultados.parquet")
-        self.df_textos_extraidos = load_dataset(r"src", "Textos_Extraidos_viejo.parquet")
+        
+        self.df_filtrado = df_general
+        self.df_requisito_fil = df_requisitos
+        self.df_criterios_fil = df_criterios
+        self.df_adjudicatarios = df_adjudicatarios
+        # self.df_docs = df_docs
+        # self.df_cpv = df_cpv
+        # self.df_analisis = load_dataset(r"src\data", "analisis_resultados.parquet") ## Version Windows
+        self.df_analisis = load_dataset(r"src/data", "analisis_resultados.parquet") ## Version Linux
+        self.df_textos_extraidos = load_dataset(r"src/data", "Textos_Extraidos_viejo.parquet")
 
         # Crear el panel de filtros una sola vez (se configurará después del login)
         self.panel_filtros = None
@@ -591,7 +599,7 @@ class AppLicitaciones:
         print(f"   Alertas cargadas: {len(self.panel_alertas.alertas)}")
 
         
-        self.debug_alertas()
+        # self.debug_alertas()
         
         # Configurar el callback para guardar búsquedas desde el panel de filtros
         self._configurar_guardar_busqueda_panel()
@@ -826,8 +834,10 @@ class AppLicitaciones:
             self.df_requisitos,
             self.df_docs,
             self.estado["filtros"],
-            self.df_textos_extraidos
+            self.df_textos_extraidos,
+            self.df_adjudicatarios
         )
+        
 
         self.estado["df_filtrado"] = df_filtrado[0]
         self.df_filtrado = df_filtrado[0]
@@ -861,6 +871,7 @@ class AppLicitaciones:
             alignment=ft.MainAxisAlignment.END,
         )
         ## Momentaneo
+        print(self.df_filtrado)
         resultados = PaginaResultados(
             page=self.page,
             df_general=self.df_filtrado,
@@ -887,13 +898,14 @@ class AppLicitaciones:
     # -------------------------
     def mostrar_detalle(self, row):
         self.page.clean()
+        # print(row)
 
         detalle_vista = PaginaDetalle(
             page=self.page,
             row=row,
-            docs=self.df_docs[self.df_docs["pliego_id"] == row["ID"]],
+            docs=self.df_docs[self.df_docs["ID_INTERNO"] == row["ID_INTERNO"]],
             analisis_data=self.df_analisis.loc[
-                self.df_analisis["pliego_id"] == row["ID"]
+                self.df_analisis["pliego_id"] == row["ID_INTERNO"]
             ].head(1)
         )
 
@@ -961,13 +973,16 @@ class AppLicitaciones:
 
 async def main(page: ft.Page):    
     df_general, df_requisitos, df_criterios, df_docs, df_cpv = load_datasets()
+    df_adj = load_dataset(r"src/data", "Adjudicatarios_general.parquet")
+    df_adj["ID_INTERNO"] = df_adj["ID_INTERNO"].astype(str)
     app=AppLicitaciones(
         page=page,
         df_general=df_general,
         df_requisitos=df_requisitos,
         df_criterios=df_criterios,
         df_docs=df_docs,
-        df_cpv=df_cpv
+        df_cpv=df_cpv,
+        df_adjudicatarios=df_adj
     )
     await app.iniciar()
 

@@ -1546,7 +1546,7 @@ class DialogoEditarBusqueda(ft.AlertDialog):
                 ft.Text("Editar filtros:", size=14, weight="bold"),
                 ft.Container(
                     content=self.filtros_editables,
-                    height=400,
+                    height=600,
                     border=ft.Border.all(width=1, color=ft.Colors.GREY_300),
                     border_radius=5,
                     padding=ft.Padding.all(10),

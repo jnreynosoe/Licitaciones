@@ -724,7 +724,10 @@ class PanelFiltros(ft.Container):
             "Ver licitaciones",
             icon=ft.Icons.SEARCH,
             on_click=lambda e: self.on_filtrar(self.get_filtros()),
-            style=ft.ButtonStyle(padding=20),
+            style=ft.ButtonStyle(
+                padding=20,
+                bgcolor=ft.Colors.BLUE_500,
+                color=ft.Colors.WHITE,),
         )
 
         # Botón de configuración
@@ -812,11 +815,7 @@ class PanelFiltros(ft.Container):
                                     ft.Text("🏢 Tipo de entidad", size=16, weight="bold"),
                                     ft.Row(self.checkboxes_entidades, wrap=True),
                                     
-                                    ft.Divider(),
-                                    ft.Row(
-                                        [self.boton_guardar_busqueda],
-                                        alignment=ft.MainAxisAlignment.END,
-                                    ),
+                                    
                                 ],
                                 spacing=15,
                                 alignment=ft.MainAxisAlignment.START,
@@ -832,6 +831,11 @@ class PanelFiltros(ft.Container):
                         ft.Container(
                             content=ft.Column(
                                 [
+                                    ft.Row(
+                                        [self.boton_guardar_busqueda],
+                                        alignment=ft.MainAxisAlignment.END,
+                                    ),
+                                    ft.Divider(),
                                     self.panel_busquedas,
                                 ],
                                 scroll="auto"

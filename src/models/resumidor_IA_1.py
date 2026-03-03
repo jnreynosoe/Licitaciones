@@ -5,12 +5,15 @@ from sentence_transformers import SentenceTransformer, util
 import torch
 from rapidfuzz import fuzz
 try:
-    from vector_db import GestorLicitaciones
+    from vector_db import GestorLicitacionesMejorado
+    from cache_bdd import CacheResumenes
 except:
-    from .vector_db import GestorLicitaciones
+    from .vector_db import GestorLicitacionesMejorado
+    from .cache_bdd import CacheResumenes
 
 import io
 import requests
+import hashlib
 
 def extract_text_from_pdf(path_or_url):
     """
@@ -118,7 +121,7 @@ def analizar_pliego(path_pdf, text=None):
     # Cargar modelo semántico
     # model = SentenceTransformer("all-MiniLM-L6-v2")
     # Inicializas el gestor (solo una vez al principio)
-    gestor = GestorLicitaciones()
+    gestor = GestorLicitacionesMejorado()
 
     # PASO 1: Ingesta (Solo se hace la primera vez que ves el PDF)
     # Asumiendo que 'text' es lo que extrajiste del PDF y 'id_licitacion' es único
@@ -130,7 +133,7 @@ def analizar_pliego(path_pdf, text=None):
     contexto_solvencia = gestor.buscar_contexto("solvencia técnica requisitos facturación certificados ISO", pliego_id="EXP-2025-001")
 
     # Unimos los fragmentos recuperados para dárselos al LLM
-    texto_para_llm = "\n---\n".join(contexto_objeto + contexto_solvencia)
+    # texto_para_llm = "\n---\n".join(contexto_objeto + contexto_solvencia)
 
     # Llamada a Ollama (Tu función resumir_texto)
     # Ahora el prompt es mucho más rico porque tiene los trozos exactos
@@ -183,6 +186,7 @@ def analizar_pliego(path_pdf, text=None):
             "certificaciones_detectadas": certificaciones,
         },
         'presupuesto_procesado': presupuesto_mejorado,
+        'informacion_solvencia': contexto_solvencia,
     }
 
     return data
@@ -211,6 +215,7 @@ def resumir_texto(text, model="deepseek-r1:14b"):
     # TEXTO A RESUMIR:
     # {text}
     # """
+    print(text)
 
     prompt = f"""
     ### ROL
@@ -264,6 +269,7 @@ import json
 
 def resumir_texto_api(text, model="deepseek-r1:14b"):
     url = "http://localhost:11434/api/generate"
+    # url = "http://localhost:11434/api/chat"
     
     prompt = generar_prompt_licitacion(text)
     
@@ -467,12 +473,110 @@ def generar_prompt_final(contexto_maestro, fragmentos_busqueda):
         Responde en formato Markdown limpio, usando tablas para los datos económicos.
         """
 
+def analizador_final_con_cache(path, forzar_regenerar=False, usar_version=None):
+    """
+    Análisis con sistema de caché inteligente
+    
+    Args:
+        path: Ruta o URL del PDF
+        forzar_regenerar: Si True, ignora la caché y genera nuevo resumen
+        usar_version: Número de versión específica a recuperar (opcional)
+    """
+    cache = CacheResumenes()
+    gestor = GestorLicitacionesMejorado()
+    
+    # 1. Extraer texto completo (necesario para el hash)
+    texto_completo = extract_text_from_pdf(path)
+    
+    # 2. Verificar si existe en caché
+    # forzar_regenerar = True
+    if not forzar_regenerar:
+        resumen_cache = cache.obtener_resumen(texto_completo)
+        
+        if resumen_cache:
+            print(f"✅ Resumen recuperado de caché (v{resumen_cache['version']})")
+            print(f"   Generado el {resumen_cache['fecha']} con {resumen_cache['modelo']}")
+            
+            # Preguntar al usuario si quiere usar este o generar uno nuevo
+            # respuesta = input("¿Usar este resumen? (s/n/ver versiones): ").lower()
+            respuesta = 's'
+            if respuesta == 's':
+                return resumen_cache['resumen']
+            elif respuesta == 'ver':
+                versiones = cache.listar_versiones(texto_completo)
+                print("\n📋 Versiones disponibles:")
+                for v in versiones:
+                    print(f"  v{v[0]} | {v[1]} | {v[2]}")
+                    print(f"  {v[3]}\n")
+                
+                elegida = int(input("Selecciona versión (0 para nueva): "))
+                if elegida > 0:
+                    # Aquí recuperarías la versión específica (ampliar la función)
+                    pass
+    
+    # 3. Generar nuevo resumen
+    print("🔄 Generando nuevo resumen...")
+    contexto_top = extraer_contexto_maestro(path)
+    # fragmentos = gestor.buscar_contexto("solvencia técnica ISO 27001", n_resultados=3)
+    fragmentos = []
+    prompt_final = generar_prompt_final(contexto_top, fragmentos)
+    
+    resultado = resumir_texto_api(prompt_final)
+    
+    # 4. Guardar en caché
+    version = cache.guardar_resumen(
+        texto_pdf=texto_completo,
+        resumen=resultado,
+        pliego_id=extraer_id_pliego(path),  # Función auxiliar
+        url_pdf=path if path.startswith('http') else None
+    )
+    
+    print(f"💾 Resumen guardado en caché (versión {version})")
+    
+    return resultado
+
+def extraer_id_pliego(path):
+    """
+    Genera un ID interno único basado en ID_licitacion + NOMBRE_PROYECTO.
+    Usa hash MD5 para crear un identificador consistente y único.
+    """
+    
+    # Normalizar valores para el hash
+    clave_unica = f"{path}".lower().strip()
+    
+    # Generar hash MD5
+    hash_obj = hashlib.md5(clave_unica.encode('utf-8'))
+    id_interno = hash_obj.hexdigest()
+    
+    return id_interno
+
+def analizador_final(path):
+    url_pdf =path
+    gestor = GestorLicitacionesMejorado()
+    
+    # 1. Extraemos lo más importante con Camelot
+    contexto_top = extraer_contexto_maestro(url_pdf)
+
+    # 2. (Opcional) Buscamos en el resto del pliego cosas específicas (solvencia, ISOs)
+    fragmentos = gestor.buscar_contexto("solvencia técnica ISO 27001", n_resultados=3)
+    print(fragmentos)
+    fragmentos = [] # Si el PDF es corto, puedes dejarlo vacío
+
+    # 3. Construimos el prompt
+    prompt_final = generar_prompt_final(contexto_top, fragmentos)
+
+    # 4. Llamamos a la IA (Ollama con modelo ligero o API)
+    resultado = resumir_texto_api(prompt_final)
+    print(resultado)
+    
+    return resultado
+    
 
 # ==========================================
 # 6️⃣  EJECUCIÓN PRINCIPAL
 # ==========================================
 if __name__ == "__main__":
-    path = "Pliegos\ENTIDADES LOCALES\Comunidad Valenciana\112_2025\TechnicalDocumentReference\PPT.pdf"  # 🔧 coloca aquí tu archivo
+    path = r"Pliegos\ENTIDADES LOCALES\Comunidad Valenciana\112_2025\TechnicalDocumentReference\PPT.pdf"  # 🔧 coloca aquí tu archivo
     # url_pdf = "https://contrataciondelestado.es/FileSystem/servlet/GetDocumentByIdServlet?DocumentIdParam=m9t1F73gX22ok0N70SbGheMuwM01a5uDplNBXFufz5pfCS1JcaRLpdBSHsWih1HvKFUCRWakgo%2BndsMj4Sfwn1h2Kb/wnRzjqsmHbiIdSXh7QB3HKyQaFUExmUVQCerk&cifrado=QUC1GjXXSiLkydRHJBmbpw%3D%3D"
     # url_pdf = "https://contrataciondelestado.es/FileSystem/servlet/GetDocumentByIdServlet?cifrado=QUC1GjXXSiLkydRHJBmbpw%3D%3D&DocumentIdParam=TdV3QlxxZrfBnzVcVKR0FzWmfzwROK7s0Vpzr4Ccq7AQQOchN8PVC7q/UK0tJls6nc9w66J/3VSzIwfoHUJlzOUO3BaHEoYi7H40ekuI4VP3GVhXrFFqN7yFncy7YfRK"
     # url_pdf = "https://contrataciondelestado.es/FileSystem/servlet/GetDocumentByIdServlet?cifrado=QUC1GjXXSiLkydRHJBmbpw%3D%3D&DocumentIdParam=bp6fcNQe93A%2Bn298IiTo2m7KY1oUI/jCi2xUFVgsXVq5sZxoSOCyXWlMuytYpmiUSWAlpDG6Ld0iGcSfZ/sSQMTV7jPtbZnV5bJ5pBd85U7DdQD9RyhUmzT4jZ2In4zL"
@@ -481,16 +585,24 @@ if __name__ == "__main__":
     # url_pdf = "https://contrataciondelestado.es/FileSystem/servlet/GetDocumentByIdServlet?cifrado=QUC1GjXXSiLkydRHJBmbpw%3D%3D&DocumentIdParam=RP%2Bk7tiueJBaIoKQF95g/7ZnexIinmVOu9F/U9IX1rRGEa6zk/Xo1XHMCK4B2fWUV94ElrfO0m2AkSUsTdX4Qa95XaicqgiP8tum1hFD%2B/m1aXEvq3KHa/AEHgtDrQw0"
     # url_pdf = "https://contrataciondelestado.es/FileSystem/servlet/GetDocumentByIdServlet?cifrado=QUC1GjXXSiLkydRHJBmbpw%3D%3D&DocumentIdParam=jzNIjSG5nKIm/HTkuLBb/EbEgjCR8vVbxA1awHtzOAGQvNEZKc%2BaDRIS/jNotdCIGkLXY%2BDhk/04C8JLnFN3lr4tm0Z9zcIK2ia0/wJNbDV7QB3HKyQaFUExmUVQCerk"
     # url_pdf = "https://contrataciondelestado.es/FileSystem/servlet/GetDocumentByIdServlet?cifrado=QUC1GjXXSiLkydRHJBmbpw%3D%3D&DocumentIdParam=UQ1Vec%2BBnnvGeGrvhqjVorSHy%2BUVWpM/WbTNoAZsBVmR/SJwv8o9ZnwkFdI5Hp/uK1uiYaQ/PU9nWB8Fpf%2BsRmux7yITvSmJYm%2BDDXi9jhJ7QB3HKyQaFUExmUVQCerk" 
-    url_pdf = "https://contrataciondelestado.es/FileSystem/servlet/GetDocumentByIdServlet?cifrado=QUC1GjXXSiLkydRHJBmbpw%3D%3D&DocumentIdParam=MjJGBf6MHb29S45JhxzyY/qVU%2BUZ3lctOs9tAWb9iI66qGUcDTonJW4QqvuQ2KiUPO852nvHTmmPVTnL3r37kl%2ByzMtruSvPpOnk/fdsmNSCx2e6p7hqtlp2aFupgHMr"
+    # url_pdf = "https://contrataciondelestado.es/FileSystem/servlet/GetDocumentByIdServlet?cifrado=QUC1GjXXSiLkydRHJBmbpw%3D%3D&DocumentIdParam=MjJGBf6MHb29S45JhxzyY/qVU%2BUZ3lctOs9tAWb9iI66qGUcDTonJW4QqvuQ2KiUPO852nvHTmmPVTnL3r37kl%2ByzMtruSvPpOnk/fdsmNSCx2e6p7hqtlp2aFupgHMr"
+    # url_pdf = 'https://contrataciondelestado.es/FileSystem/servlet/GetDocumentByIdServlet?cifrado=QUC1GjXXSiLkydRHJBmbpw%3D%3D&DocumentIdParam=1%2Bavo/9ysSP65N3woo4oJaHDYn5gtVmYcvhmeApX/aqwXZ2GjInSpoZLndBgz/l31ev1c/0c2xaa13YDIjbuFmnAkn/z4Lc6HdWd0ApjCxCHAj0WEJrB5sP7amrh2jBD'
+    # url_pdf = 'https://contrataciondelestado.es/FileSystem/servlet/GetDocumentByIdServlet?cifrado=QUC1GjXXSiLkydRHJBmbpw%3D%3D&DocumentIdParam=Q2DR7%2BV4GRNSJc9wsQa4GkgZ37M4A3bnRbgjmFIsCtcrOtJnproJpVK5bjHuxkBGDZFFzT5Obruv1cfvSf8xdiVxqKw7Dja/f0lgJ9GfhRb3GVhXrFFqN7yFncy7YfRK'
+    # url_pdf= 'https://contrataciondelestado.es/FileSystem/servlet/GetDocumentByIdServlet?cifrado=QUC1GjXXSiLkydRHJBmbpw%3D%3D&DocumentIdParam=X0FZPhG0uu37mIKeTDdYMu6oZAtVrd28/GrT75ZVoj2QxSC18fSpLusPfkVcA6l5vlko2Wylmbgctl4069vc8iECN1tqxZ4bbzGbo4kEqkZJOVDbGCDM%2BMigrvuVS7Rv'
+    url_pdf = 'https://contrataciondelestado.es/FileSystem/servlet/GetDocumentByIdServlet?cifrado=QUC1GjXXSiLkydRHJBmbpw%3D%3D&DocumentIdParam=8rfTpKz2i6SN%2BzN7UcGuu2%2B5u6zs%2B7vcCSmDSrj%2B93wXZ3czYp1H3hYzhNEXekiw1xqA0vv70ahHXdhrut6A2EJ9ay6rjdu3ynwZWR08ZOv3GVhXrFFqN7yFncy7YfRK'
 
-    text = extract_text_from_pdf(url_pdf)
+    # text = extract_text_from_pdf(url_pdf)
     # resultado = analizar_pliego(url_pdf, text)
+    
+    # # # Guardar a JSON
+    # with open("pliego_analisis.json", "w", encoding="utf-8") as f:
+    #     json.dump(resultado, f, ensure_ascii=False, indent=2)
 
     # print("\n🔹 Información estructurada detectada:\n")
     # print(json.dumps(resultado, indent=2, ensure_ascii=False))
     # print(text)
 
-    gestor = GestorLicitaciones()
+    # gestor = GestorLicitacionesMejorado()
 
     # PASO 1: Ingesta (Solo se hace la primera vez que ves el PDF)
     # Asumiendo que 'text' es lo que extrajiste del PDF y 'id_licitacion' es único
@@ -517,17 +629,29 @@ if __name__ == "__main__":
     # 1. Extraemos lo más importante con Camelot
     contexto_top = extraer_contexto_maestro(url_pdf)
 
-    # 2. (Opcional) Buscamos en el resto del pliego cosas específicas (solvencia, ISOs)
-    # fragmentos = gestor_vectorial.buscar_contexto("solvencia técnica ISO 27001", n_resultados=3)
+    # # 2. (Opcional) Buscamos en el resto del pliego cosas específicas (solvencia, ISOs)
+    # # fragmentos = gestor_vectorial.buscar_contexto("solvencia técnica ISO 27001", n_resultados=3)
     fragmentos = [] # Si el PDF es corto, puedes dejarlo vacío
 
-    # 3. Construimos el prompt
+    # # 3. Construimos el prompt
     prompt_final = generar_prompt_final(contexto_top, fragmentos)
+    
+    # print("PRIMERA PRUEBA SIN CACHE PREVIO")    
+    # resumen = analizador_final_con_cache(url_pdf)
+    # print(resumen)
+    
+    # # Segunda vez: recupera de caché
+    # print("SEGUNDA PRUEBA CON CACHE PREVIO")
+    resumen = analizador_final_con_cache(url_pdf)
+    print(resumen)
+    
+    # Si quieres forzar regeneración
+    # resumen = analizador_final_con_cache(url_pdf, forzar_regenerar=True)
 
     # 4. Llamamos a la IA (Ollama con modelo ligero o API)
-    resultado = resumir_texto_api(prompt_final, model="llama3.2:3b")
+    resultado = resumir_texto_api(prompt_final)
     print(resultado)
 
-    # # # Guardar a JSON
-    # with open("pliego_resumen.json", "w", encoding="utf-8") as f:
-    #     json.dump(resultado, f, ensure_ascii=False, indent=2)
+    # # Guardar a JSON
+    with open("pliego_resumen.json", "w", encoding="utf-8") as f:
+        json.dump(resultado, f, ensure_ascii=False, indent=2)
